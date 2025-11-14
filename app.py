@@ -1,98 +1,83 @@
-# Colab-ready: train, save, and download an Iris model (scaler + LogisticRegression)
-# Run this single cell in Google Colab. It will train, save `iris_model.pkl` and download it.
-
-# Step 0: installs (Colab usually has these but safe to ensure)
-!pip install -q scikit-learn pandas joblib
-
-# Step 1: Imports
-import numpy as np
+import streamlit as st
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
+import numpy as np
 import joblib
 from pathlib import Path
 
-from sklearn.datasets import load_iris
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import make_pipeline
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+st.set_page_config(page_title="Iris classifier", layout="centered")
 
-# (Colab-specific) utility to download files
-try:
-    from google.colab import files
-    _can_download = True
-except Exception:
-    _can_download = False
+TITLE = "Iris classifier (StandardScaler + LogisticRegression)"
+st.title(TITLE)
+st.write("Load the `iris_model.pkl` artifact (created in Colab) and try predictions.")
 
-# ---------- Step 2: Load the dataset ----------
-iris = load_iris()
-df = pd.DataFrame(data=iris.data, columns=iris.feature_names)
-df['species'] = iris.target
-df['species'] = df['species'].apply(lambda x: iris.target_names[x])
+@st.cache_resource
+def load_artifact(path: str = "iris_model.pkl"):
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Model file not found at: {p.resolve()}")
+    artifact = joblib.load(p)
+    return artifact
 
-# ---------- Step 3: Basic EDA (printed) ----------
-print("🔍 First 5 rows of dataset:")
-display(df.head())
+# Sidebar upload
+st.sidebar.header("Model (iris_model.pkl)")
+uploaded = st.sidebar.file_uploader("Upload iris_model.pkl (optional)", type=["pkl", "joblib"])
 
-print("\n📊 Class distribution:")
-print(df['species'].value_counts())
+artifact = None
+if uploaded is not None:
+    try:
+        artifact = joblib.load(uploaded)
+        st.sidebar.success("Artifact loaded from upload.")
+    except Exception as e:
+        st.sidebar.error(f"Failed to load uploaded file: {e}")
 
-# optional visualization (uncomment if you want)
-# sns.pairplot(df, hue='species')
-# plt.show()
+if artifact is None:
+    try:
+        artifact = load_artifact("iris_model.pkl")
+        st.sidebar.success("Loaded artifact from repo root: iris_model.pkl")
+    except FileNotFoundError:
+        st.sidebar.warning("Upload iris_model.pkl or add it to the repo root.")
+    except Exception as e:
+        st.sidebar.error(f"Error loading artifact: {e}")
 
-# ---------- Step 4: Train/Test split ----------
-X = df.drop('species', axis=1)
-y = df['species']
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
+if artifact is None:
+    st.info("Upload the model file to continue.")
+    st.stop()
 
-# ---------- Step 5: Build pipeline and train ----------
-pipeline = make_pipeline(
-    StandardScaler(),
-    LogisticRegression(max_iter=500, multi_class='auto', solver='lbfgs', random_state=42)
-)
+pipeline = artifact.get("pipeline")
+feature_names = list(artifact.get("feature_names"))
+target_names = list(artifact.get("target_names"))
 
-pipeline.fit(X_train, y_train)
+st.write(f"**Features used:** {', '.join(feature_names)}")
+st.write(f"**Target classes:** {', '.join(target_names)}")
 
-# ---------- Step 6: Evaluation ----------
-y_pred = pipeline.predict(X_test)
-print("\n✅ Classification Report:")
-print(classification_report(y_test, y_pred))
+# ---------------- Prediction UI ----------------
+st.header("Make a prediction")
 
-acc = accuracy_score(y_test, y_pred)
-print("✅ Accuracy Score:", acc)
+col1, col2 = st.columns(2)
 
-cm = confusion_matrix(y_test, y_pred)
-print("Confusion matrix:\n", cm)
+with col1:
+    sepal_length = st.number_input(feature_names[0], min_value=0.0, value=5.1, step=0.1)
+    sepal_width  = st.number_input(feature_names[1], min_value=0.0, value=3.5, step=0.1)
+with col2:
+    petal_length = st.number_input(feature_names[2], min_value=0.0, value=1.4, step=0.1)
+    petal_width  = st.number_input(feature_names[3], min_value=0.0, value=0.2, step=0.1)
 
-# optional: show confusion matrix heatmap
-plt.figure(figsize=(5,4))
-sns.heatmap(cm, annot=True, fmt='d', xticklabels=iris.target_names, yticklabels=iris.target_names)
-plt.xlabel('Predicted'); plt.ylabel('True'); plt.title('Confusion Matrix')
-plt.show()
+sample = np.array([[sepal_length, sepal_width, petal_length, petal_width]])
+sample_df = pd.DataFrame(sample, columns=feature_names)
 
-# ---------- Step 7: Save artifact (pipeline + metadata) ----------
-artifact = {
-    "pipeline": pipeline,                 # scaler + model
-    "feature_names": iris.feature_names,  # list-like of feature names
-    "target_names": list(iris.target_names),
-    "sklearn_version": __import__("sklearn").__version__
-}
+if st.button("Predict"):
+    pred = pipeline.predict(sample_df)[0]
+    probs = pipeline.predict_proba(sample_df)[0]
 
-OUT_PATH = Path("iris_model.pkl")
-joblib.dump(artifact, OUT_PATH)
-print(f"\nSaved model artifact to: {OUT_PATH.resolve()}")
+    st.success(f"Predicted class: **{pred}**")
 
-# ---------- Step 8: Trigger download in Colab (if available) ----------
-if _can_download:
-    print("Preparing download...")
-    files.download(str(OUT_PATH))
-    print("Download started — check your browser. If it doesn't start, download the file from the Colab file browser.")
-else:
-    print("Not running in Colab environment or google.colab.files not available.")
-    print("You can still download iris_model.pkl from the notebook environment (Files sidebar) or copy it to Drive.")
-.after running and downloading , now i will create a irisrepo repository . You give me app.py and requirements.txt
+    proba_df = pd.DataFrame({
+        "class": target_names,
+        "probability": probs
+    }).sort_values("probability", ascending=False)
+    
+    st.subheader("Class probabilities")
+    st.dataframe(proba_df)
+
+st.markdown("---")
+st.caption("Iris Model Predictor — Streamlit App")
